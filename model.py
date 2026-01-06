@@ -56,9 +56,9 @@ def transposed_conv(in_conv:int, out_conv:int, kernel_size:int, relu:bool = Fals
 
 
 class Encoder(nn.Module):
-    def __init__(self, in_channels, dim_latent):
+    def __init__(self, in_channels, dim_latent, device):
         super().__init__()
-        self.indices = []
+        self.device = device
         self.dim_latent = dim_latent
         # Layer 1
         self.layer_1 = conv2d(in_conv=in_channels, out_conv=8, kernel_size=5, relu=True, max_pool=True, norm='')
@@ -82,6 +82,7 @@ class Encoder(nn.Module):
         self.latent = nn.Sequential(self.layer_5, self.layer_6)
 
     def forward(self, x):
+        self.indices = []
         # x = self.encoder(x)
         x, indice= self.layer_1(x)
         x = self.bn_1(x)
@@ -102,22 +103,29 @@ class Encoder(nn.Module):
         x = x.view(-1, self.dim_latent, 2)
         # # print(x.shape)
         
-        # # z = u + o * rand
-        rand_gau = torch.randn(size=[x.shape[0], x.shape[1], 1])
-        # # print(rand_gau.shape)
-
-        mean = x[:, :, 0].view(-1, self.dim_latent, 1)
+        mean = x[:, :, 0]
         # print(f'Mean shape: {mean.shape}')
-        var= x[:, :, 1].view(-1, self.dim_latent, 1)
-        # print(f'Var shape: {var.shape}')
-        mul = torch.mul(var, rand_gau)
-        # print(f'Mul shape: {mul.shape}')
-        z = torch.sum(mean + mul, dim=2)
-        # print(f'Latent z: {z.shape}')
-        print(self.indices[0].shape, self.indices[1].shape)
-        
-        print(f'Loss: {kl_divergence(mean, var)}')
-        return z, self.indices
+        logvar= x[:, :, 1]
+        # print(f'LogVar shape: {logvar.shape}')
+        z = self.reparameterize(mean, logvar)
+        return mean, logvar, z, self.indices
+
+
+    def reparameterize(self, mean, logvar):
+        # Convert logvar => std
+        """
+        Docstring for reparameterize
+        Logvar = log(std^2) = 2log(std) => std = e^(1/2 * logvar)
+        """
+        std = torch.exp(0.5 * logvar)
+        # print(f'std shape: {std.shape}')
+        # Reparameterization Trick: z = mean + std * epsilon
+        epsilon = torch.rand_like(std).to(self.device)
+        # print(f'epsilon shape: {epsilon.shape}')
+        z = mean + std * epsilon
+        # print(f'Z shape: {z.shape}')
+        return z
+    
 
 
 class Decoder(nn.Module):
@@ -140,6 +148,7 @@ class Decoder(nn.Module):
         self.bn_2 = get_norm_layer(dim=2, norm='bn', out_channel=8)
 
         self.layer_1d = transposed_conv(in_conv=8, out_conv= out_channels, kernel_size=5, norm='bn')
+        self.last_act = nn.Tanh()
 
     def forward(self, x):
         x = self.layer_6d(x)
@@ -157,32 +166,28 @@ class Decoder(nn.Module):
         x = self.bn_2(x)
 
         x = self.layer_1d(x)
-        return x
+        return self.last_act(x) # Range casting to [-1, 1]
 
 class VAE(nn.Module):                                                                                             
-    def __init__(self, in_channels, out_channels, dim_latent):
+    def __init__(self, in_channels, out_channels, dim_latent, device):
         super().__init__()
         self.indices = []
-        self.encoder = Encoder(in_channels=in_channels, dim_latent=dim_latent)
+        self.encoder = Encoder(in_channels=in_channels, dim_latent=dim_latent, device = device)
         self.decoder = Decoder(dim_latent=dim_latent, out_channels=out_channels, indices= self.indices)
 
     def forward(self, x):
-        x, self.indices = self.encoder(x)
+        mean, logvar, x, self.indices = self.encoder(x)
         self.decoder.indices = self.indices
         x = self.decoder(x)
-        return x
+        return mean, logvar, x
 
 
 if __name__ == '__main__':
-    input = torch.rand(4, 3, 128, 128)
-    # encoder = Encoder(in_channels=3, dim_latent=256)
-    # z, indices = encoder(input)
-    # decoder = Decoder(dim_latent=256, out_channels=3, indices=indices)
-    # out = decoder(z)
-    # print(out.shape)
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    input = torch.rand(4, 3, 128, 128).to(device)
 
-    vae = VAE(in_channels=3, out_channels=3, dim_latent=256)
-    out = vae(input)
+    vae = VAE(in_channels=3, out_channels=3, dim_latent=100, device = device).to(device)
+    mean, var, out = vae(input)
     print(out.shape)
 
 
