@@ -57,6 +57,22 @@ class Trainer():
         self.loss_l2 = 0.0
         self.loss_kl = 0.0
 
+        # Initialize Valid Engine
+        def eval_step(engine, batch):
+            self.model.eval()
+            with torch.no_grad():
+                img = batch
+                img = img.to(self.device)
+                _, _, img_gen = self.model(img) # Forward
+            
+            return img, img_gen
+        
+        self.evaluator = Engine(eval_step)
+        Loss(self.criterion_L2, output_transform=lambda x: (x[0], x[1])).attach(self.evaluator, 'l2')
+        PSNR(data_range=1.0, output_transform=lambda x: (denorm(x[0]), denorm(x[1]))).attach(self.evaluator, 'psnr')
+        SSIM(data_range=1.0, output_transform=lambda x: (denorm(x[0]), denorm(x[1]))).attach(self.evaluator, 'ssim')
+        
+        # Check load checkpoint to resume train ?
         if self.resume_path:
             self._load_checkpoint(self.resume_path)
 
@@ -97,14 +113,7 @@ class Trainer():
         """
         Process an validation by val_step
         """
-        def eval_step(engine, batch):
-            self.model.eval()
-            with torch.no_grad():
-                img = batch
-                img = img.to(self.device)
-                _, _, img_gen = self.model(img) # Forward
-            
-            return img, img_gen
+        
 
         #-----------------Compute the losses of training phrase------------
         loss_l2_avg = self.loss_l2 / self.val_step
@@ -122,14 +131,10 @@ Average Train KL Loss: {loss_kl_avg:.3f}
         print('Start Validating...')
 
         #--------------Compute metrics of valid set-------------------
-        evaluator = Engine(eval_step)
-        Loss(self.criterion_L2, output_transform=lambda x: (x[0], x[1])).attach(evaluator, 'l2')
-        PSNR(data_range=1.0, output_transform=lambda x: (denorm(x[0]), denorm(x[1]))).attach(evaluator, 'psnr')
-        SSIM(data_range=1.0, output_transform=lambda x: (denorm(x[0]), denorm(x[1]))).attach(evaluator, 'ssim')
-        evaluator.run(tqdm(self.valid_loader, desc="Validating", leave=False))
-        l2_avg = evaluator.state.metrics['l2']
-        psnr_avg = evaluator.state.metrics['psnr']
-        ssim_avg = evaluator.state.metrics['ssim']
+        self.evaluator.run(tqdm(self.valid_loader, desc="Validating", leave=False))
+        l2_avg = self.evaluator.state.metrics['l2']
+        psnr_avg = self.evaluator.state.metrics['psnr']
+        ssim_avg = self.evaluator.state.metrics['ssim']
         
         # Show METRICS LOG of Valid Phrase
         print(
@@ -147,7 +152,7 @@ SSIM: {ssim_avg:.3f}
         self.writer.add_scalar(tag = 'Metrics/SSIM', scalar_value = ssim_avg, global_step = current_step)
 
         # Log images
-        real, fake = evaluator.state.output
+        real, fake = self.evaluator.state.output
         n_imgs = min(8, fake.size(0))        
         self.writer.add_image('Images/Fake', make_grid((denorm(fake))[:n_imgs], nrow=4), current_step)
         self.writer.add_image('Images/Real', make_grid((denorm(real))[:n_imgs], nrow=4), current_step)
