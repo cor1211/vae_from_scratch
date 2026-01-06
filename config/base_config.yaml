@@ -1,0 +1,16 @@
+data:
+  root: /mnt/data1tb/vinh/vae_from_scratch/dataset/cartoonset100k_jpg
+  train_percent: 0.8
+  train_batch_size: 32
+  valid_batch_size: 32
+  num_workers: 2
+
+train:
+  seed: 42
+  device: cuda
+  lr: 0.00001
+  betas: [0.5, 0.999]
+  val_step: 1000
+  total_epochs: 100
+  lambda_kl: 1
+  resume_path: /mnt/data1tb/vinh/vae_from_scratch/checkpoints/exp_20260105-163744/last.pth
